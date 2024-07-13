@@ -16,5 +16,7 @@ pip install -r requirements.txt
 
 Example run
 ```
-main.py --input-file input.xlsx --output-file output.xlsx --column-index 0 --threshold 80
+python generate_test_data.py
+
+python main.py --input-file test_data.xlsx --output-file output.xlsx --column-index 0 --threshold 80
 ```

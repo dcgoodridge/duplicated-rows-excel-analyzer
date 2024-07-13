@@ -1,6 +1,6 @@
-pandas
+pandas==2.0.0
 openpyxl
 fuzzywuzzy
 chardet
 faker
-numpy
+numpy==1.20.3
