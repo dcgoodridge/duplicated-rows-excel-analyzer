@@ -1,0 +1,6 @@
+pandas
+openpyxl
+fuzzywuzzy
+chardet
+faker
+numpy
