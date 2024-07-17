@@ -3,4 +3,4 @@ openpyxl
 fuzzywuzzy
 chardet
 faker
-numpy==1.20.3
+numpy==1.26.4

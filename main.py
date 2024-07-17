@@ -1,69 +1,88 @@
+import argparse
+import logging
+from collections import Counter
+
 import pandas as pd
 from fuzzywuzzy import fuzz
-from fuzzywuzzy import process
-import chardet
-import logging
-import argparse
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def load_excel(file_path, encoding=None):
+
+def load_excel(file_path):
     try:
-        if encoding:
-            # return pd.read_csv(file_path, encoding=encoding)
-            return pd.read_excel(file_path)
-        else:
-            return pd.read_excel(file_path)
-    except UnicodeDecodeError as e:
-        # Attempt to detect encoding
-        with open(file_path, 'rb') as f:
-            result = chardet.detect(f.read())
-            detected_encoding = result['encoding']
-            logging.warning(f"Failed to load with provided encoding. Detected encoding: {detected_encoding}")
-            return pd.read_excel(file_path, encoding=detected_encoding)
+        logging.info(f"Input file: '{file_path}'..")
+        return pd.read_excel(file_path)
     except Exception as e:
         logging.error(f"An error occurred: {e}")
         return None
 
-def group_similarities(df, column_index, threshold):
-    unique_values = df.iloc[:, column_index].unique()
-    groups = {}
-    group_index = 0
 
-    logging.info(f"Grouping {len(unique_values)} unique values from column index {column_index}")
+def compute_similarity_groups_index(df, column_index, threshold=80):
+    column_values = df.iloc[:, column_index].astype(str)
+    num_rows = len(column_values)
+    similarity_groups_index = [-1] * num_rows  # -1 indicates unassigned
+    current_group = 0
+    for i in range(num_rows):
+        if i % 100 == 0:
+            logging.info(f"Processing {i} out of {num_rows} rows..")
+        if similarity_groups_index[i] != -1:  # This row is already part of a Similarity-Group. Skip
+            continue
+        current_group += 1
+        similarity_groups_index[i] = current_group  # Assign a new Similarity-Group index
+        for j in range(i + 1, num_rows):
+            if similarity_groups_index[j] == -1:
+                similarity = fuzz.ratio(column_values[i], column_values[j])
+                if similarity >= threshold:
+                    similarity_groups_index[j] = current_group
+    logging.info(f"Finished processing {num_rows} rows")
+    total_count = num_rows
+    groups_count = current_group
+    duplicated_rows = total_count - groups_count
+    duplicated_rows_percent = 100 * (duplicated_rows / total_count)
+    logging.info(f"Found {duplicated_rows} duplicated rows ({duplicated_rows_percent:.1f}%)")
+    return similarity_groups_index
 
-    for idx, value in enumerate(unique_values):
-        if not any(value in group for group in groups.values()):
-            matches = process.extractBests(value, unique_values, scorer=fuzz.token_sort_ratio, score_cutoff=threshold)
-            groups[group_index] = [match[0] for match in matches]
-            group_index += 1
-
-        if idx % 100 == 0:
-            logging.info(f"Processed {idx} out of {len(unique_values)} unique values")
-
-    return groups
-
-def add_group_column(df, column_index, groups):
-    group_map = {}
-    for group_index, group_values in groups.items():
-        for value in group_values:
-            group_map[value] = group_index
-
-    df.insert(0, 'Group', df.iloc[:, column_index].map(group_map))
-    df.sort_values(by='Group', inplace=True)
-    return df
 
 def save_excel(df, output_path):
     df.to_excel(output_path, index=False)
 
+
+def add_group_indices_to_df(df, group_col_name, column_index, group_indices):
+    df.insert(column_index, group_col_name, group_indices)
+    return df
+
+
+def reorder_rows_by_group_size(df, group_col_name):
+    group_counts = df[group_col_name].value_counts().to_dict()
+    df['GroupSize'] = df[group_col_name].map(group_counts)
+    df = df.sort_values(by=['GroupSize', group_col_name], ascending=[False, True]).drop(columns=['GroupSize'])
+    return df
+
+
+def reorder_rows_by_group_index(df, group_col_name):
+    df = df.sort_values(by=[group_col_name], ascending=True)
+    return df
+
+
+def reindex_groups_by_size(group_indices):
+    group_counts = Counter(group_indices)
+    sorted_groups = sorted(group_counts.keys(), key=lambda k: group_counts[k], reverse=True)
+    new_index_map = {old_idx: new_idx for new_idx, old_idx in enumerate(sorted_groups, 1)}
+    new_group_indices = [new_index_map[old_idx] for old_idx in group_indices]
+    return new_group_indices
+
+
 def main(file_path, column_index, threshold, output_path, encoding=None):
     logging.info("Starting the similarity grouping process")
-    df = load_excel(file_path, encoding)
+    df = load_excel(file_path)
     if df is not None:
-        groups = group_similarities(df, column_index, threshold)
-        df = add_group_column(df, column_index, groups)
-        save_excel(df, output_path)
-        logging.info(f"Processed file saved to {output_path}")
+        similarity_groups_index = compute_similarity_groups_index(df, column_index, threshold)
+        similarity_groups_index = reindex_groups_by_size(similarity_groups_index)
+        df_edit = add_group_indices_to_df(df, 'GroupIndex', column_index, similarity_groups_index)
+        df_edit = reorder_rows_by_group_index(df_edit, 'GroupIndex')
+        save_excel(df_edit, output_path)
+        logging.info(f"Output file: '{output_path}'")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Excel Similarity Grouping")
